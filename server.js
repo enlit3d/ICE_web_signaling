@@ -22,22 +22,52 @@ class ICE_WebSocketSignalingServer {
   start() {
     // Create HTTP server
     this.httpServer = http.createServer((req, res) => {
-      // Simple health check endpoint
-      if (req.url === '/' || req.url === '/health') {
+      // Log all HTTP requests
+      console.log(`[SignalingServer] HTTP ${req.method} ${req.url} from ${req.socket.remoteAddress}`);
+      
+      // Check if this is a WebSocket upgrade request
+      const isWebSocketUpgrade = req.headers.upgrade && 
+                                 req.headers.upgrade.toLowerCase() === 'websocket';
+      
+      if (isWebSocketUpgrade) {
+        console.log(`[SignalingServer] WebSocket upgrade request detected - letting ws handle it`);
+        // Don't respond - let the WebSocket server handle it
+        return;
+      }
+      
+      // Handle regular HTTP requests
+      if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('ICE WebSocket Signaling Server Running\n');
+      } else if (req.url === '/') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('ICE WebSocket Signaling Server\nConnect via WebSocket to use signaling.\n');
       } else {
         res.writeHead(404);
         res.end();
       }
     });
 
-    // Create WebSocket server
-    this.wss = new WebSocket.Server({ server: this.httpServer });
+    // Create WebSocket server on the same HTTP server
+    // This will handle upgrade requests automatically
+    this.wss = new WebSocket.Server({ 
+      server: this.httpServer,
+      // Explicitly handle all paths for WebSocket
+      verifyClient: (info) => {
+        console.log(`[SignalingServer] WebSocket upgrade request from ${info.req.socket.remoteAddress}`);
+        return true; // Accept all connections
+      }
+    });
 
     this.wss.on('connection', (ws, req) => {
       const clientIp = req.socket.remoteAddress;
+      const clientPath = req.url;
+      console.log(`[SignalingServer] WebSocket connection established from ${clientIp} to path ${clientPath}`);
       this.addPeer(ws, clientIp);
+    });
+
+    this.wss.on('error', (err) => {
+      console.error('[SignalingServer] WebSocket server error:', err);
     });
 
     this.httpServer.listen(this.port, this.host, () => {
@@ -100,6 +130,14 @@ class ICE_WebSocketSignalingServer {
   }
 
   processMessage(peer, message) {
+    // ECHO:<data> - Echo back to sender for testing
+    if (message.startsWith('ECHO:')) {
+      const echoData = message.substring(5);
+      console.log(`[SignalingServer] peer ${peer.id} echo request with ${echoData.length} bytes`);
+      this.sendMessage(peer, message);
+      return;
+    }
+
     if (message.startsWith('HOSTING:')) {
       const address = message.substring(8);
       peer.state = State.HOSTING;
