@@ -20,22 +20,17 @@ class ICE_WebSocketSignalingServer {
   }
 
   start() {
-    // Create HTTP server
     this.httpServer = http.createServer((req, res) => {
-      // Log all HTTP requests
       console.log(`[SignalingServer] HTTP ${req.method} ${req.url} from ${req.socket.remoteAddress}`);
       
-      // Check if this is a WebSocket upgrade request
       const isWebSocketUpgrade = req.headers.upgrade && 
                                  req.headers.upgrade.toLowerCase() === 'websocket';
       
       if (isWebSocketUpgrade) {
         console.log(`[SignalingServer] WebSocket upgrade request detected - letting ws handle it`);
-        // Don't respond - let the WebSocket server handle it
         return;
       }
       
-      // Handle regular HTTP requests
       if (req.url === '/health') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end('ICE WebSocket Signaling Server Running\n');
@@ -48,14 +43,11 @@ class ICE_WebSocketSignalingServer {
       }
     });
 
-    // Create WebSocket server on the same HTTP server
-    // This will handle upgrade requests automatically
     this.wss = new WebSocket.Server({ 
       server: this.httpServer,
-      // Explicitly handle all paths for WebSocket
       verifyClient: (info) => {
         console.log(`[SignalingServer] WebSocket upgrade request from ${info.req.socket.remoteAddress}`);
-        return true; // Accept all connections
+        return true;
       }
     });
 
@@ -130,7 +122,6 @@ class ICE_WebSocketSignalingServer {
   }
 
   processMessage(peer, message) {
-    // ECHO:<data> - Echo back to sender for testing
     if (message.startsWith('ECHO:')) {
       const echoData = message.substring(5);
       console.log(`[SignalingServer] peer ${peer.id} echo request with ${echoData.length} bytes`);
@@ -197,6 +188,10 @@ class ICE_WebSocketSignalingServer {
     }
 
     for (const peer of this.connections) {
+      if (peer.ws.readyState !== WebSocket.OPEN) {
+        continue;
+      }
+
       if (peer.state === matchingState && peer.addressString === srcPeer.addressString) {
         const hostPeer = srcPeer.state === State.HOSTING ? srcPeer : peer;
         const joinPeer = srcPeer.state === State.HOSTING ? peer : srcPeer;
@@ -207,9 +202,12 @@ class ICE_WebSocketSignalingServer {
         this.sendMessage(hostPeer, 'GET_SDP:');
         hostPeer.otherId = joinPeer.id;
         joinPeer.otherId = hostPeer.id;
+
         break;
       }
     }
+
+    this.maybeCleanUp();
   }
 
   relayMsg(srcPeer, message) {
@@ -249,6 +247,31 @@ class ICE_WebSocketSignalingServer {
     if (index !== -1) {
       this.connections.splice(index, 1);
     }
+  }
+
+  maybeCleanUp() {
+    if (this.connections.length < 32) {
+      return;
+    }
+
+    const originalCount = this.connections.length;
+
+    this.connections = this.connections.filter((peer) => {
+      if (peer.ws.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+
+      if (peer.state !== State.HOSTING && peer.id + 64 < this.nextId) {
+        try {
+          peer.ws.close();
+        } catch (e) {}
+        return false;
+      }
+
+      return true;
+    });
+
+    console.log(`[SignalingServer] cleans up: ${this.connections.length} active peers remaining from ${originalCount} peers.`);
   }
 }
 
