@@ -252,14 +252,12 @@ class ICE_WebSocketSignalingServer {
   }
 }
 
-// Start server
 const PORT = process.env.PORT || 10000;
 const HOST = '0.0.0.0';
 
 const server = new ICE_WebSocketSignalingServer(PORT, HOST);
 server.start();
 
-// Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n[SignalingServer] Shutting down...');
   server.stop();
